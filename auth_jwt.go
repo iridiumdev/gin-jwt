@@ -293,7 +293,7 @@ func (mw *GinJWTMiddleware) MiddlewareInit() error {
 			c.JSON(http.StatusOK, gin.H{
 				"code":          http.StatusOK,
 				"access_token":  token,
-				"refresh_token": token,
+				"refresh_token": refreshToken,
 				"expire":        expire.Format(time.RFC3339),
 			})
 		}
@@ -346,6 +346,10 @@ func (mw *GinJWTMiddleware) middlewareImpl(c *gin.Context) {
 	if err != nil {
 		mw.unauthorized(c, http.StatusUnauthorized, mw.HTTPStatusMessageFunc(err, c))
 		return
+	}
+
+	if claims["scope"] != "access" {
+		mw.Unauthorized(c, http.StatusForbidden, mw.HTTPStatusMessageFunc(ErrForbidden, c))
 	}
 
 	if int64(claims["exp"].(float64)) < mw.TimeFunc().Unix() {
@@ -419,6 +423,7 @@ func (mw *GinJWTMiddleware) LoginHandler(c *gin.Context) {
 	expire := mw.TimeFunc().Add(mw.Timeout)
 	claims["exp"] = expire.Unix()
 	claims["orig_iat"] = mw.TimeFunc().Unix()
+	claims["scope"] = "access"
 	tokenString, err := mw.signedString(token)
 
 	// Create refresh the token
@@ -427,13 +432,14 @@ func (mw *GinJWTMiddleware) LoginHandler(c *gin.Context) {
 
 	if mw.PayloadFunc != nil {
 		for key, value := range mw.PayloadFunc(data) {
-			claims[key] = value
+			refreshClaims[key] = value
 		}
 	}
 
 	expireRefresh := mw.TimeFunc().Add(mw.Timeout).Add(mw.MaxRefresh)
 	refreshClaims["exp"] = expireRefresh.Unix()
 	refreshClaims["orig_iat"] = mw.TimeFunc().Unix()
+	refreshClaims["scope"] = "refresh"
 	refreshTokenString, err := mw.signedString(refreshToken)
 
 	if err != nil {
@@ -484,7 +490,7 @@ func (mw *GinJWTMiddleware) RefreshHandler(c *gin.Context) {
 
 // RefreshToken refresh token and check if token is expired
 func (mw *GinJWTMiddleware) RefreshToken(c *gin.Context) (string, string, time.Time, error) {
-	claims, err := mw.CheckIfRefreshTokenExpire(c)
+	claims, err := mw.CheckIfRefreshTokenValid(c)
 	if err != nil {
 		return "", "", time.Now(), err
 	}
@@ -500,6 +506,7 @@ func (mw *GinJWTMiddleware) RefreshToken(c *gin.Context) (string, string, time.T
 	expire := mw.TimeFunc().Add(mw.Timeout)
 	newClaims["exp"] = expire.Unix()
 	newClaims["orig_iat"] = mw.TimeFunc().Unix()
+	newClaims["scope"] = "access"
 	tokenString, err := mw.signedString(newToken)
 
 	if err != nil {
@@ -517,7 +524,8 @@ func (mw *GinJWTMiddleware) RefreshToken(c *gin.Context) (string, string, time.T
 	expireRefresh := mw.TimeFunc().Add(mw.Timeout).Add(mw.MaxRefresh)
 	newRefreshClaims["exp"] = expireRefresh.Unix()
 	newRefreshClaims["orig_iat"] = mw.TimeFunc().Unix()
-	refreshTokenString, err := mw.signedString(newToken)
+	newRefreshClaims["scope"] = "refresh"
+	refreshTokenString, err := mw.signedString(newRefreshToken)
 
 	if err != nil {
 		return "", "", time.Now(), err
@@ -558,8 +566,8 @@ func (mw *GinJWTMiddleware) CheckIfTokenExpire(c *gin.Context) (jwt.MapClaims, e
 	return claims, nil
 }
 
-// CheckIfRefreshTokenExpire check if refresh token is expired
-func (mw *GinJWTMiddleware) CheckIfRefreshTokenExpire(c *gin.Context) (jwt.MapClaims, error) {
+// CheckIfRefreshTokenValid check if refresh token is not expired and contains the correct scope:refresh
+func (mw *GinJWTMiddleware) CheckIfRefreshTokenValid(c *gin.Context) (jwt.MapClaims, error) {
 
 	imp := struct {
 		RefreshToken string `json:"refresh_token" binding:"required"`
@@ -581,6 +589,10 @@ func (mw *GinJWTMiddleware) CheckIfRefreshTokenExpire(c *gin.Context) (jwt.MapCl
 
 	if origIat < mw.TimeFunc().Add(-mw.Timeout).Add(-mw.MaxRefresh).Unix() {
 		return nil, ErrExpiredToken
+	}
+
+	if claims["scope"] != "refresh" {
+		return nil, ErrForbidden
 	}
 
 	return claims, nil
