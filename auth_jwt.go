@@ -282,7 +282,7 @@ func (mw *GinJWTMiddleware) MiddlewareInit() error {
 			c.JSON(http.StatusOK, gin.H{
 				"code":          http.StatusOK,
 				"access_token":  token,
-				"refersh_token": refreshToken,
+				"refresh_token": refreshToken,
 				"expire":        expire.Format(time.RFC3339),
 			})
 		}
