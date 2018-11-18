@@ -29,3 +29,6 @@ gin-bin
 coverage.txt
 vendor/*
 !vendor/vendor.json
+
+*.iml
+.idea/
